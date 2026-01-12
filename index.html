@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Format King - For People Who Hate Excel</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Format King</h1>
+            <p class="tagline">For people who hate Excel</p>
+        </header>
+
+        <main>
+            <section class="input-section">
+                <div class="input-methods">
+                    <div class="tab-buttons">
+                        <button class="tab-btn active" data-tab="paste">Paste Text</button>
+                        <button class="tab-btn" data-tab="upload">Upload CSV</button>
+                    </div>
+
+                    <div class="tab-content active" id="paste-tab">
+                        <textarea id="paste-input" placeholder="Paste your CSV, TSV, or any delimited text here...
+
+Example:
+Name, Age, City
+John, 28, New York
+Jane, 32, Los Angeles
+Bob, 45, Chicago"></textarea>
+                        <div class="delimiter-options">
+                            <label>Delimiter:</label>
+                            <select id="delimiter-select">
+                                <option value="auto">Auto-detect</option>
+                                <option value=",">Comma (,)</option>
+                                <option value=";">Semicolon (;)</option>
+                                <option value="\t">Tab</option>
+                                <option value="|">Pipe (|)</option>
+                                <option value=" ">Space</option>
+                            </select>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="first-row-header" checked>
+                                First row is header
+                            </label>
+                        </div>
+                        <button class="btn primary" id="format-btn">Format Table</button>
+                    </div>
+
+                    <div class="tab-content" id="upload-tab">
+                        <div class="upload-zone" id="drop-zone">
+                            <div class="upload-icon">📁</div>
+                            <p>Drag & drop your CSV file here</p>
+                            <p class="or-text">or</p>
+                            <label class="btn secondary">
+                                Browse Files
+                                <input type="file" id="file-input" accept=".csv,.tsv,.txt" hidden>
+                            </label>
+                        </div>
+                        <p class="file-name" id="file-name"></p>
+                    </div>
+                </div>
+            </section>
+
+            <section class="output-section" id="output-section">
+                <div class="table-controls">
+                    <div class="search-box">
+                        <input type="text" id="search-input" placeholder="Search table...">
+                    </div>
+                    <div class="export-buttons">
+                        <button class="btn small primary-small" id="copy-rich-btn" title="Copy formatted table for Word/OneNote">Copy for Word</button>
+                        <button class="btn small" id="copy-btn" title="Copy as plain text">Copy Text</button>
+                        <button class="btn small" id="export-csv-btn" title="Export as CSV">Export CSV</button>
+                        <button class="btn small" id="export-json-btn" title="Export as JSON">Export JSON</button>
+                    </div>
+                </div>
+                <div class="table-info">
+                    <span id="row-count"></span>
+                    <span id="col-count"></span>
+                </div>
+                <div class="table-wrapper">
+                    <table id="data-table">
+                        <thead id="table-head"></thead>
+                        <tbody id="table-body"></tbody>
+                    </table>
+                </div>
+                <div class="empty-state" id="empty-state">
+                    <div class="empty-icon">📊</div>
+                    <p>Your formatted table will appear here</p>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <p>Format King - Making data readable since now</p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
