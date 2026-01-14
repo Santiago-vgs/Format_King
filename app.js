@@ -264,7 +264,23 @@ class FormatKing {
 
     // Switch to a different table (for multi-table support)
     switchToTable(index) {
-        if (index >= 0 && index < this.tables.length) {
+        // index -1 means "All Tables"
+        if (index === -1) {
+            this.currentTableIndex = -1;
+            // Combine all tables into one view with table name as first column
+            this.headers = ['Table', ...this.getCommonHeaders()];
+            this.data = [];
+            for (const table of this.tables) {
+                for (const row of table.data) {
+                    // Pad row to match common headers length
+                    const paddedRow = this.padRowToHeaders(row, table.headers);
+                    this.data.push([table.name, ...paddedRow]);
+                }
+            }
+            this.filteredData = [...this.data];
+            this.sortColumn = -1;
+            this.renderTable();
+        } else if (index >= 0 && index < this.tables.length) {
             this.currentTableIndex = index;
             const table = this.tables[index];
             this.headers = table.headers;
@@ -275,15 +291,64 @@ class FormatKing {
         }
     }
 
+    // Get common headers across all tables (union of all headers)
+    getCommonHeaders() {
+        if (this.tables.length === 0) return [];
+
+        // Check if all tables have the same headers
+        const firstHeaders = this.tables[0].headers;
+        const allSame = this.tables.every(t =>
+            t.headers.length === firstHeaders.length &&
+            t.headers.every((h, i) => h === firstHeaders[i])
+        );
+
+        if (allSame) {
+            return firstHeaders;
+        }
+
+        // If headers differ, collect unique headers in order
+        const seen = new Set();
+        const allHeaders = [];
+        for (const table of this.tables) {
+            for (const header of table.headers) {
+                if (!seen.has(header)) {
+                    seen.add(header);
+                    allHeaders.push(header);
+                }
+            }
+        }
+        return allHeaders;
+    }
+
+    // Pad a row to match the common headers
+    padRowToHeaders(row, tableHeaders) {
+        const commonHeaders = this.getCommonHeaders();
+        const result = new Array(commonHeaders.length).fill('');
+
+        tableHeaders.forEach((header, i) => {
+            const commonIndex = commonHeaders.indexOf(header);
+            if (commonIndex !== -1 && i < row.length) {
+                result[commonIndex] = row[i];
+            }
+        });
+
+        return result;
+    }
+
     // Update table selector dropdown
     updateTableSelector() {
         if (!this.tableSelector || !this.tableSelectorContainer) return;
 
         if (this.tables.length > 1) {
             this.tableSelectorContainer.classList.remove('hidden');
-            this.tableSelector.innerHTML = this.tables.map((table, i) =>
-                `<option value="${i}">${table.name} (${table.data.length} rows)</option>`
-            ).join('');
+            const totalRows = this.tables.reduce((sum, t) => sum + t.data.length, 0);
+            const options = [
+                `<option value="-1">All Tables (${totalRows} rows)</option>`,
+                ...this.tables.map((table, i) =>
+                    `<option value="${i}">${table.name} (${table.data.length} rows)</option>`
+                )
+            ];
+            this.tableSelector.innerHTML = options.join('');
         } else {
             this.tableSelectorContainer.classList.add('hidden');
         }
@@ -351,9 +416,13 @@ class FormatKing {
             const tables = this.parseDatabricksFormat(text);
             if (tables.length > 0) {
                 this.tables = tables;
-                this.currentTableIndex = 0;
                 this.updateTableSelector();
-                this.switchToTable(0);
+                // Default to "All Tables" view (-1) when multiple tables
+                const defaultView = tables.length > 1 ? -1 : 0;
+                this.switchToTable(defaultView);
+                if (this.tableSelector) {
+                    this.tableSelector.value = defaultView.toString();
+                }
                 const totalRows = tables.reduce((sum, t) => sum + t.data.length, 0);
                 this.showToast(`Loaded ${tables.length} table(s), ${totalRows} total rows`);
                 return;
@@ -540,13 +609,21 @@ class FormatKing {
     }
 
     generateRichHTML() {
-        // Generate a self-contained HTML table with inline styles
-        // Word and OneNote recognize this format and preserve the structure
+        // If we have multiple tables and are in "All Tables" view, generate separate tables with headers
+        if (this.tables.length > 1 && this.currentTableIndex === -1) {
+            return this.generateMultiTableHTML();
+        }
+
+        return this.generateSingleTableHTML(this.headers, this.filteredData);
+    }
+
+    generateSingleTableHTML(headers, data, tableName = null) {
         const tableStyle = `
             border-collapse: collapse;
             font-family: Calibri, Arial, sans-serif;
             font-size: 11pt;
             width: 100%;
+            margin-bottom: 20px;
         `.replace(/\s+/g, ' ').trim();
 
         const headerCellStyle = `
@@ -571,27 +648,50 @@ class FormatKing {
             background-color: #F2F2F2;
         `.replace(/\s+/g, ' ').trim();
 
+        const tableTitleStyle = `
+            font-family: Calibri, Arial, sans-serif;
+            font-size: 14pt;
+            font-weight: bold;
+            color: #2E75B6;
+            padding: 10px 0;
+            border-bottom: 3px solid #2E75B6;
+            margin-bottom: 10px;
+        `.replace(/\s+/g, ' ').trim();
+
         // Build header row
-        const headerRow = `<tr>${this.headers.map(h =>
+        const headerRow = `<tr>${headers.map(h =>
             `<th style="${headerCellStyle}">${this.escapeHtml(h)}</th>`
         ).join('')}</tr>`;
 
         // Build data rows with alternating colors
-        const dataRows = this.filteredData.map((row, index) => {
+        const dataRows = data.map((row, index) => {
             const style = index % 2 === 0 ? cellStyle : altRowStyle;
             return `<tr>${row.map(cell =>
                 `<td style="${style}">${this.escapeHtml(cell)}</td>`
             ).join('')}</tr>`;
         }).join('');
 
-        // Wrap in full HTML document for better compatibility
+        const titleHTML = tableName ? `<div style="${tableTitleStyle}">TABLE: ${this.escapeHtml(tableName)}</div>` : '';
+
         return `
-            <html>
-            <body>
+            ${titleHTML}
             <table style="${tableStyle}">
                 <thead>${headerRow}</thead>
                 <tbody>${dataRows}</tbody>
             </table>
+        `.trim();
+    }
+
+    generateMultiTableHTML() {
+        // Generate HTML with each table clearly separated
+        const tablesHTML = this.tables.map(table => {
+            return this.generateSingleTableHTML(table.headers, table.data, table.name);
+        }).join('<br><br>');
+
+        return `
+            <html>
+            <body>
+            ${tablesHTML}
             </body>
             </html>
         `.trim();
