@@ -6,6 +6,8 @@ class FormatKing {
         this.sortColumn = -1;
         this.sortDirection = 'asc';
         this.filteredData = [];
+        this.tables = []; // For multiple tables (Databricks format)
+        this.currentTableIndex = 0;
 
         this.initElements();
         this.initEventListeners();
@@ -42,6 +44,10 @@ class FormatKing {
         this.copyRichBtn = document.getElementById('copy-rich-btn');
         this.exportCsvBtn = document.getElementById('export-csv-btn');
         this.exportJsonBtn = document.getElementById('export-json-btn');
+
+        // Table selector for multiple tables
+        this.tableSelector = document.getElementById('table-selector');
+        this.tableSelectorContainer = document.getElementById('table-selector-container');
     }
 
     initEventListeners() {
@@ -81,6 +87,11 @@ class FormatKing {
         this.copyRichBtn.addEventListener('click', () => this.copyRichTable());
         this.exportCsvBtn.addEventListener('click', () => this.exportCSV());
         this.exportJsonBtn.addEventListener('click', () => this.exportJSON());
+
+        // Table selector for multiple tables
+        if (this.tableSelector) {
+            this.tableSelector.addEventListener('change', (e) => this.switchToTable(parseInt(e.target.value)));
+        }
 
         // Keyboard shortcut for format
         this.pasteInput.addEventListener('keydown', (e) => {
@@ -125,6 +136,157 @@ class FormatKing {
         });
 
         return bestDelimiter;
+    }
+
+    // Detect if text is Databricks/SQL ASCII table format
+    isDatabricksFormat(text) {
+        // Look for patterns like +----+----+ and |value|value|
+        const hasBorderLines = /^\+[-+]+\+$/m.test(text);
+        const hasDataLines = /^\|.+\|$/m.test(text);
+        const hasTableHeader = /^=+\s*\n\s*TABLE:/m.test(text) || hasBorderLines;
+        return (hasBorderLines && hasDataLines) || hasTableHeader;
+    }
+
+    // Parse Databricks/SQL ASCII table format
+    parseDatabricksFormat(text) {
+        const tables = [];
+        const lines = text.split('\n');
+
+        let currentTableName = null;
+        let currentRows = [];
+        let inTable = false;
+        let headerParsed = false;
+        let currentHeaders = [];
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+
+            // Check for table name header (e.g., "TABLE: blasts")
+            const tableNameMatch = line.match(/^TABLE:\s*(.+)$/);
+            if (tableNameMatch) {
+                // Save previous table if exists
+                if (currentRows.length > 0 && currentHeaders.length > 0) {
+                    tables.push({
+                        name: currentTableName || `Table ${tables.length + 1}`,
+                        headers: currentHeaders,
+                        data: currentRows
+                    });
+                }
+                currentTableName = tableNameMatch[1].trim();
+                currentRows = [];
+                currentHeaders = [];
+                headerParsed = false;
+                inTable = false;
+                continue;
+            }
+
+            // Skip separator lines (====== or +----+)
+            if (/^=+$/.test(line) || /^\+[-+]+\+$/.test(line)) {
+                if (inTable && headerParsed) {
+                    // This might be end of table or just a separator
+                }
+                inTable = true;
+                continue;
+            }
+
+            // Parse data lines (|value|value|value|)
+            if (line.startsWith('|') && line.endsWith('|')) {
+                const cells = line
+                    .slice(1, -1) // Remove leading and trailing |
+                    .split('|')
+                    .map(cell => cell.trim());
+
+                if (!headerParsed) {
+                    currentHeaders = cells;
+                    headerParsed = true;
+                } else {
+                    currentRows.push(cells);
+                }
+            }
+        }
+
+        // Don't forget the last table
+        if (currentRows.length > 0 && currentHeaders.length > 0) {
+            tables.push({
+                name: currentTableName || `Table ${tables.length + 1}`,
+                headers: currentHeaders,
+                data: currentRows
+            });
+        }
+
+        // If no named tables found, try parsing as single table
+        if (tables.length === 0) {
+            const singleTable = this.parseSingleAsciiTable(text);
+            if (singleTable) {
+                tables.push(singleTable);
+            }
+        }
+
+        return tables;
+    }
+
+    // Parse a single ASCII table without TABLE: headers
+    parseSingleAsciiTable(text) {
+        const lines = text.split('\n');
+        let headers = [];
+        let data = [];
+        let headerParsed = false;
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+
+            // Skip separator lines
+            if (/^\+[-+]+\+$/.test(trimmed) || /^=+$/.test(trimmed)) {
+                continue;
+            }
+
+            // Parse data lines
+            if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+                const cells = trimmed
+                    .slice(1, -1)
+                    .split('|')
+                    .map(cell => cell.trim());
+
+                if (!headerParsed) {
+                    headers = cells;
+                    headerParsed = true;
+                } else {
+                    data.push(cells);
+                }
+            }
+        }
+
+        if (headers.length > 0) {
+            return { name: 'Table 1', headers, data };
+        }
+        return null;
+    }
+
+    // Switch to a different table (for multi-table support)
+    switchToTable(index) {
+        if (index >= 0 && index < this.tables.length) {
+            this.currentTableIndex = index;
+            const table = this.tables[index];
+            this.headers = table.headers;
+            this.data = table.data;
+            this.filteredData = [...this.data];
+            this.sortColumn = -1;
+            this.renderTable();
+        }
+    }
+
+    // Update table selector dropdown
+    updateTableSelector() {
+        if (!this.tableSelector || !this.tableSelectorContainer) return;
+
+        if (this.tables.length > 1) {
+            this.tableSelectorContainer.classList.remove('hidden');
+            this.tableSelector.innerHTML = this.tables.map((table, i) =>
+                `<option value="${i}">${table.name} (${table.data.length} rows)</option>`
+            ).join('');
+        } else {
+            this.tableSelectorContainer.classList.add('hidden');
+        }
     }
 
     parseCSV(text, delimiter) {
@@ -184,6 +346,21 @@ class FormatKing {
             return;
         }
 
+        // Check if it's Databricks/SQL ASCII table format
+        if (this.isDatabricksFormat(text)) {
+            const tables = this.parseDatabricksFormat(text);
+            if (tables.length > 0) {
+                this.tables = tables;
+                this.currentTableIndex = 0;
+                this.updateTableSelector();
+                this.switchToTable(0);
+                const totalRows = tables.reduce((sum, t) => sum + t.data.length, 0);
+                this.showToast(`Loaded ${tables.length} table(s), ${totalRows} total rows`);
+                return;
+            }
+        }
+
+        // Fall back to CSV parsing
         let delimiter = this.delimiterSelect.value;
         if (delimiter === 'auto') {
             delimiter = this.detectDelimiter(text);
@@ -192,6 +369,8 @@ class FormatKing {
         }
 
         const rows = this.parseCSV(text, delimiter);
+        this.tables = []; // Clear multi-table mode
+        this.updateTableSelector();
         this.processData(rows);
     }
 

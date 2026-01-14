@@ -22,13 +22,13 @@
                     </div>
 
                     <div class="tab-content active" id="paste-tab">
-                        <textarea id="paste-input" placeholder="Paste your CSV, TSV, or any delimited text here...
+                        <textarea id="paste-input" placeholder="Paste your CSV, TSV, Databricks/SQL table output, or any delimited text here...
 
-Example:
-Name, Age, City
-John, 28, New York
-Jane, 32, Los Angeles
-Bob, 45, Chicago"></textarea>
+Supports:
+- CSV/TSV files
+- Databricks DESCRIBE TABLE output
+- SQL query results with +---+ borders
+- Multiple tables at once"></textarea>
                         <div class="delimiter-options">
                             <label>Delimiter:</label>
                             <select id="delimiter-select">
@@ -75,6 +75,10 @@ Bob, 45, Chicago"></textarea>
                     </div>
                 </div>
                 <div class="table-info">
+                    <div id="table-selector-container" class="table-selector-container hidden">
+                        <label for="table-selector">Table:</label>
+                        <select id="table-selector"></select>
+                    </div>
                     <span id="row-count"></span>
                     <span id="col-count"></span>
                 </div>

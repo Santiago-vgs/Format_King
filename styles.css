@@ -295,10 +295,44 @@ header h1 {
 
 .table-info {
     display: flex;
+    align-items: center;
     gap: 1.5rem;
     margin-bottom: 1rem;
     color: var(--text-secondary);
     font-size: 0.875rem;
+}
+
+/* Table Selector for multiple tables */
+.table-selector-container {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.table-selector-container.hidden {
+    display: none;
+}
+
+.table-selector-container label {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+#table-selector {
+    padding: 0.4rem 0.75rem;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    cursor: pointer;
+    min-width: 200px;
+}
+
+#table-selector:focus {
+    outline: none;
+    border-color: var(--accent-hover);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
 }
 
 /* Table */
