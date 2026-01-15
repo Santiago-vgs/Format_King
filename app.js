@@ -138,13 +138,18 @@ class FormatKing {
         return bestDelimiter;
     }
 
-    // Detect if text is Databricks/SQL ASCII table format
+    // Detect if text is Databricks/SQL ASCII table format or Unicode box table
     isDatabricksFormat(text) {
         // Look for patterns like +----+----+ and |value|value|
         const hasBorderLines = /^\+[-+]+\+$/m.test(text);
         const hasDataLines = /^\|.+\|$/m.test(text);
         const hasTableHeader = /^=+\s*\n\s*TABLE:/m.test(text) || hasBorderLines;
-        return (hasBorderLines && hasDataLines) || hasTableHeader;
+
+        // Also check for Unicode box-drawing characters (Claude terminal output)
+        const hasUnicodeBorders = /[┌┐└┘├┤┬┴┼─│]/m.test(text);
+        const hasUnicodeDataLines = /^│.+│$/m.test(text);
+
+        return (hasBorderLines && hasDataLines) || hasTableHeader || (hasUnicodeBorders && hasUnicodeDataLines);
     }
 
     // Parse Databricks/SQL ASCII table format
@@ -180,8 +185,8 @@ class FormatKing {
                 continue;
             }
 
-            // Skip separator lines (====== or +----+)
-            if (/^=+$/.test(line) || /^\+[-+]+\+$/.test(line)) {
+            // Skip separator lines (====== or +----+ or Unicode borders ┌─┬─┐ ├─┼─┤ └─┴─┘)
+            if (/^=+$/.test(line) || /^\+[-+]+\+$/.test(line) || /^[┌├└][─┬┼┴]+[┐┤┘]$/.test(line)) {
                 if (inTable && headerParsed) {
                     // This might be end of table or just a separator
                 }
@@ -189,11 +194,12 @@ class FormatKing {
                 continue;
             }
 
-            // Parse data lines (|value|value|value|)
-            if (line.startsWith('|') && line.endsWith('|')) {
+            // Parse data lines (|value|value|value| or │value│value│value│)
+            if ((line.startsWith('|') && line.endsWith('|')) || (line.startsWith('│') && line.endsWith('│'))) {
+                const delimiter = line.startsWith('│') ? '│' : '|';
                 const cells = line
-                    .slice(1, -1) // Remove leading and trailing |
-                    .split('|')
+                    .slice(1, -1) // Remove leading and trailing | or │
+                    .split(delimiter)
                     .map(cell => cell.trim());
 
                 if (!headerParsed) {
@@ -231,20 +237,38 @@ class FormatKing {
         let headers = [];
         let data = [];
         let headerParsed = false;
+        let tableName = null;
+
+        // Check for a title line before the table (e.g., "Table Name Decoder")
+        for (let i = 0; i < lines.length; i++) {
+            const trimmed = lines[i].trim();
+            // If we find a non-empty line that's not a border, it might be a title
+            if (trimmed && !/^[┌├└\+]/.test(trimmed) && !/^[│|]/.test(trimmed) && !/^=+$/.test(trimmed)) {
+                // Check if next line is a border (indicating this is a title)
+                const nextLine = lines[i + 1]?.trim() || '';
+                if (/^[┌\+]/.test(nextLine)) {
+                    tableName = trimmed;
+                    break;
+                }
+            }
+            // Stop looking once we hit the table
+            if (/^[┌\+│|]/.test(trimmed)) break;
+        }
 
         for (const line of lines) {
             const trimmed = line.trim();
 
-            // Skip separator lines
-            if (/^\+[-+]+\+$/.test(trimmed) || /^=+$/.test(trimmed)) {
+            // Skip separator lines (ASCII or Unicode)
+            if (/^\+[-+]+\+$/.test(trimmed) || /^=+$/.test(trimmed) || /^[┌├└][─┬┼┴]+[┐┤┘]$/.test(trimmed)) {
                 continue;
             }
 
-            // Parse data lines
-            if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+            // Parse data lines (ASCII | or Unicode │)
+            if ((trimmed.startsWith('|') && trimmed.endsWith('|')) || (trimmed.startsWith('│') && trimmed.endsWith('│'))) {
+                const delimiter = trimmed.startsWith('│') ? '│' : '|';
                 const cells = trimmed
                     .slice(1, -1)
-                    .split('|')
+                    .split(delimiter)
                     .map(cell => cell.trim());
 
                 if (!headerParsed) {
@@ -257,7 +281,7 @@ class FormatKing {
         }
 
         if (headers.length > 0) {
-            return { name: 'Table 1', headers, data };
+            return { name: tableName || 'Table 1', headers, data };
         }
         return null;
     }
