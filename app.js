@@ -141,13 +141,15 @@ class FormatKing {
     // Detect if text is Databricks/SQL ASCII table format or Unicode box table
     isDatabricksFormat(text) {
         // Look for patterns like +----+----+ and |value|value|
-        const hasBorderLines = /^\+[-+]+\+$/m.test(text);
-        const hasDataLines = /^\|.+\|$/m.test(text);
+        // Use \s* to handle leading whitespace
+        const hasBorderLines = /^\s*\+[-+]+\+/m.test(text);
+        const hasDataLines = /^\s*\|.+\|/m.test(text);
         const hasTableHeader = /^=+\s*\n\s*TABLE:/m.test(text) || hasBorderLines;
 
         // Also check for Unicode box-drawing characters (Claude terminal output)
+        // Use \s* to handle leading whitespace
         const hasUnicodeBorders = /[┌┐└┘├┤┬┴┼─│]/m.test(text);
-        const hasUnicodeDataLines = /^│.+│$/m.test(text);
+        const hasUnicodeDataLines = /^\s*│.+│/m.test(text);
 
         return (hasBorderLines && hasDataLines) || hasTableHeader || (hasUnicodeBorders && hasUnicodeDataLines);
     }
@@ -185,8 +187,12 @@ class FormatKing {
                 continue;
             }
 
+            // Clean line - remove trailing commas that might be artifacts
+            const cleanLine = line.replace(/,+$/, '').trim();
+
             // Skip separator lines (====== or +----+ or Unicode borders ┌─┬─┐ ├─┼─┤ └─┴─┘)
-            if (/^=+$/.test(line) || /^\+[-+]+\+$/.test(line) || /^[┌├└][─┬┼┴]+[┐┤┘]$/.test(line)) {
+            // Also handle lines that might not have closing characters
+            if (/^=+$/.test(cleanLine) || /^\+[-+]+\+?$/.test(cleanLine) || /^[┌├└][─┬┼┴]+[┐┤┘]?$/.test(cleanLine)) {
                 if (inTable && headerParsed) {
                     // This might be end of table or just a separator
                 }
@@ -195,10 +201,23 @@ class FormatKing {
             }
 
             // Parse data lines (|value|value|value| or │value│value│value│)
-            if ((line.startsWith('|') && line.endsWith('|')) || (line.startsWith('│') && line.endsWith('│'))) {
-                const delimiter = line.startsWith('│') ? '│' : '|';
-                const cells = line
-                    .slice(1, -1) // Remove leading and trailing | or │
+            // Handle lines that might be missing closing | or │
+            const isAsciiDataLine = cleanLine.startsWith('|');
+            const isUnicodeDataLine = cleanLine.startsWith('│');
+
+            if (isAsciiDataLine || isUnicodeDataLine) {
+                const delimiter = isUnicodeDataLine ? '│' : '|';
+                let content = cleanLine;
+
+                // Remove leading delimiter
+                content = content.slice(1);
+
+                // Remove trailing delimiter if present
+                if (content.endsWith(delimiter)) {
+                    content = content.slice(0, -1);
+                }
+
+                const cells = content
                     .split(delimiter)
                     .map(cell => cell.trim());
 
@@ -239,35 +258,53 @@ class FormatKing {
         let headerParsed = false;
         let tableName = null;
 
-        // Check for a title line before the table (e.g., "Table Name Decoder")
+        // Check for a title line before the table (e.g., "Table Name Decoder" or "Summary")
         for (let i = 0; i < lines.length; i++) {
             const trimmed = lines[i].trim();
             // If we find a non-empty line that's not a border, it might be a title
             if (trimmed && !/^[┌├└\+]/.test(trimmed) && !/^[│|]/.test(trimmed) && !/^=+$/.test(trimmed)) {
-                // Check if next line is a border (indicating this is a title)
-                const nextLine = lines[i + 1]?.trim() || '';
-                if (/^[┌\+]/.test(nextLine)) {
-                    tableName = trimmed;
-                    break;
+                // Check if any following line (within next 3 lines) is a border (indicating this is a title)
+                for (let j = 1; j <= 3 && i + j < lines.length; j++) {
+                    const nextLine = lines[i + j]?.trim() || '';
+                    if (/^[┌\+]/.test(nextLine)) {
+                        tableName = trimmed;
+                        break;
+                    }
+                    // Stop if we hit a data line
+                    if (/^[│|]/.test(nextLine)) break;
                 }
+                if (tableName) break;
             }
             // Stop looking once we hit the table
             if (/^[┌\+│|]/.test(trimmed)) break;
         }
 
         for (const line of lines) {
-            const trimmed = line.trim();
+            // Clean line - remove trailing commas that might be artifacts
+            const trimmed = line.trim().replace(/,+$/, '').trim();
 
-            // Skip separator lines (ASCII or Unicode)
-            if (/^\+[-+]+\+$/.test(trimmed) || /^=+$/.test(trimmed) || /^[┌├└][─┬┼┴]+[┐┤┘]$/.test(trimmed)) {
+            // Skip separator lines (ASCII or Unicode) - handle missing closing chars
+            if (/^\+[-+]+\+?$/.test(trimmed) || /^=+$/.test(trimmed) || /^[┌├└][─┬┼┴]+[┐┤┘]?$/.test(trimmed)) {
                 continue;
             }
 
-            // Parse data lines (ASCII | or Unicode │)
-            if ((trimmed.startsWith('|') && trimmed.endsWith('|')) || (trimmed.startsWith('│') && trimmed.endsWith('│'))) {
-                const delimiter = trimmed.startsWith('│') ? '│' : '|';
-                const cells = trimmed
-                    .slice(1, -1)
+            // Parse data lines (ASCII | or Unicode │) - handle missing closing delimiter
+            const isAsciiDataLine = trimmed.startsWith('|');
+            const isUnicodeDataLine = trimmed.startsWith('│');
+
+            if (isAsciiDataLine || isUnicodeDataLine) {
+                const delimiter = isUnicodeDataLine ? '│' : '|';
+                let content = trimmed;
+
+                // Remove leading delimiter
+                content = content.slice(1);
+
+                // Remove trailing delimiter if present
+                if (content.endsWith(delimiter)) {
+                    content = content.slice(0, -1);
+                }
+
+                const cells = content
                     .split(delimiter)
                     .map(cell => cell.trim());
 
