@@ -323,6 +323,203 @@ class FormatKing {
         return null;
     }
 
+    // Detect Markdown table format
+    isMarkdownTable(text) {
+        // Look for separator row with dashes between pipes: | --- | --- |
+        const separatorPattern = /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/m;
+        if (!separatorPattern.test(text)) return false;
+        // Must also have at least one data row with | delimiters
+        const lines = text.split('\n').filter(l => l.trim());
+        const dataLines = lines.filter(l => l.includes('|') && !/^[\s|:*-]+$/.test(l.trim()));
+        return dataLines.length >= 1;
+    }
+
+    // Parse Markdown table(s)
+    parseMarkdownTable(text) {
+        const tables = [];
+        const blocks = text.split(/\n\s*\n/);
+
+        for (const block of blocks) {
+            const lines = block.split('\n').filter(l => l.trim());
+            const sepPattern = /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/;
+            const sepIndex = lines.findIndex(l => sepPattern.test(l.trim()));
+            if (sepIndex < 1) continue;
+
+            const splitRow = (line) => {
+                let s = line.trim();
+                if (s.startsWith('|')) s = s.slice(1);
+                if (s.endsWith('|')) s = s.slice(0, -1);
+                return s.split('|').map(c => c.trim());
+            };
+
+            const headers = splitRow(lines[sepIndex - 1]);
+            const data = [];
+            for (let i = sepIndex + 1; i < lines.length; i++) {
+                if (!lines[i].includes('|')) continue;
+                data.push(splitRow(lines[i]));
+            }
+
+            if (headers.length > 0 && data.length > 0) {
+                tables.push({
+                    name: `Table ${tables.length + 1}`,
+                    headers,
+                    data
+                });
+            }
+        }
+        return tables;
+    }
+
+    // Detect JSON array of objects
+    isJSONArray(text) {
+        const trimmed = text.trimStart();
+        if (!trimmed.startsWith('[')) return false;
+        try {
+            const parsed = JSON.parse(trimmed);
+            return Array.isArray(parsed) && parsed.length > 0 &&
+                typeof parsed[0] === 'object' && parsed[0] !== null && !Array.isArray(parsed[0]);
+        } catch {
+            return false;
+        }
+    }
+
+    // Parse JSON array of objects
+    parseJSONArray(text) {
+        const arr = JSON.parse(text.trimStart());
+        // Collect all keys preserving insertion order
+        const keySet = new Set();
+        for (const obj of arr) {
+            if (typeof obj === 'object' && obj !== null && !Array.isArray(obj)) {
+                Object.keys(obj).forEach(k => keySet.add(k));
+            }
+        }
+        const headers = [...keySet];
+        const data = arr.filter(obj => typeof obj === 'object' && obj !== null && !Array.isArray(obj))
+            .map(obj => headers.map(h => {
+                const val = obj[h];
+                if (val === undefined || val === null) return '';
+                if (typeof val === 'object') return JSON.stringify(val);
+                return String(val);
+            }));
+        return { name: 'JSON Data', headers, data };
+    }
+
+    // Detect fixed-width / space-aligned table
+    isFixedWidthTable(text) {
+        const lines = text.split('\n').filter(l => l.trim());
+        if (lines.length < 3) return false;
+
+        // Find column boundaries: positions where 2+ spaces appear across most lines
+        const maxLen = Math.max(...lines.map(l => l.length));
+        if (maxLen < 5) return false;
+
+        // Skip obvious underline rows for boundary detection
+        const contentLines = lines.filter(l => !/^[\s\-=]+$/.test(l));
+        if (contentLines.length < 2) return false;
+
+        const spaceCount = new Array(maxLen).fill(0);
+        for (const line of contentLines) {
+            for (let i = 0; i < maxLen; i++) {
+                const ch = i < line.length ? line[i] : ' ';
+                if (ch === ' ') spaceCount[i]++;
+            }
+        }
+
+        // Find positions that are spaces in 80%+ of lines and form 2+ wide gaps
+        const threshold = contentLines.length * 0.8;
+        let boundaries = 0;
+        let inGap = false;
+        let gapWidth = 0;
+        for (let i = 0; i < maxLen; i++) {
+            if (spaceCount[i] >= threshold) {
+                gapWidth++;
+                if (gapWidth >= 2 && !inGap) {
+                    boundaries++;
+                    inGap = true;
+                }
+            } else {
+                inGap = false;
+                gapWidth = 0;
+            }
+        }
+
+        // Need at least 1 column boundary to be a fixed-width table
+        return boundaries >= 1;
+    }
+
+    // Parse fixed-width / space-aligned table
+    parseFixedWidthTable(text) {
+        const lines = text.split('\n').filter(l => l.trim());
+        if (lines.length < 2) return null;
+
+        // Pad all lines to the same length
+        const maxLen = Math.max(...lines.map(l => l.length));
+        const padded = lines.map(l => l.padEnd(maxLen));
+
+        // Detect underline rows (--- or === rows)
+        const isUnderline = (l) => /^[\s\-=]+$/.test(l) && /[-=]{2,}/.test(l);
+
+        // Use only content lines for boundary detection
+        const contentLines = padded.filter(l => !isUnderline(l));
+        if (contentLines.length < 2) return null;
+
+        // Build space map
+        const spaceCount = new Array(maxLen).fill(0);
+        for (const line of contentLines) {
+            for (let i = 0; i < maxLen; i++) {
+                if (line[i] === ' ') spaceCount[i]++;
+            }
+        }
+
+        // Find column boundary ranges (2+ consecutive spaces in 80%+ of lines)
+        const threshold = contentLines.length * 0.8;
+        const cuts = []; // split positions
+        let inGap = false;
+        let gapStart = -1;
+        for (let i = 0; i < maxLen; i++) {
+            if (spaceCount[i] >= threshold) {
+                if (!inGap) { gapStart = i; inGap = true; }
+            } else {
+                if (inGap) {
+                    const gapWidth = i - gapStart;
+                    if (gapWidth >= 2) {
+                        // Cut at the middle of the gap
+                        cuts.push(Math.floor((gapStart + i) / 2));
+                    }
+                    inGap = false;
+                }
+            }
+        }
+
+        if (cuts.length === 0) return null;
+
+        // Slice each line into cells
+        const sliceLine = (line) => {
+            const cells = [];
+            let prev = 0;
+            for (const cut of cuts) {
+                cells.push(line.slice(prev, cut).trim());
+                prev = cut;
+            }
+            cells.push(line.slice(prev).trim());
+            return cells;
+        };
+
+        // First content line is headers, rest are data
+        const headers = sliceLine(contentLines[0]);
+        const data = [];
+        for (let i = 1; i < contentLines.length; i++) {
+            const row = sliceLine(contentLines[i]);
+            // Skip rows that are all empty
+            if (row.some(c => c !== '')) {
+                data.push(row);
+            }
+        }
+
+        if (data.length === 0) return null;
+        return { name: 'Table 1', headers, data };
+    }
+
     // Switch to a different table (for multi-table support)
     switchToTable(index) {
         // index -1 means "All Tables"
@@ -486,6 +683,45 @@ class FormatKing {
                 }
                 const totalRows = tables.reduce((sum, t) => sum + t.data.length, 0);
                 this.showToast(`Loaded ${tables.length} table(s), ${totalRows} total rows`);
+                return;
+            }
+        }
+
+        // Check for Markdown tables
+        if (this.isMarkdownTable(text)) {
+            const tables = this.parseMarkdownTable(text);
+            if (tables.length > 0) {
+                this.tables = tables;
+                this.updateTableSelector();
+                const defaultView = tables.length > 1 ? -1 : 0;
+                this.switchToTable(defaultView);
+                if (this.tableSelector) this.tableSelector.value = defaultView.toString();
+                const totalRows = tables.reduce((sum, t) => sum + t.data.length, 0);
+                this.showToast(`Loaded ${tables.length} Markdown table(s), ${totalRows} total rows`);
+                return;
+            }
+        }
+
+        // Check for JSON array
+        if (this.isJSONArray(text)) {
+            const table = this.parseJSONArray(text);
+            if (table) {
+                this.tables = [table];
+                this.updateTableSelector();
+                this.switchToTable(0);
+                this.showToast(`Loaded JSON data: ${table.data.length} rows`);
+                return;
+            }
+        }
+
+        // Check for fixed-width tables
+        if (this.isFixedWidthTable(text)) {
+            const table = this.parseFixedWidthTable(text);
+            if (table) {
+                this.tables = [table];
+                this.updateTableSelector();
+                this.switchToTable(0);
+                this.showToast(`Loaded fixed-width table: ${table.data.length} rows`);
                 return;
             }
         }
